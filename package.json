@@ -1,0 +1,10 @@
+{
+  "name": "neuroguard-gait-analysis",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npm --prefix finger_tapping_test_final/tremor run dev",
+    "build": "npm --prefix finger_tapping_test_final/tremor run build",
+    "preview": "npm --prefix finger_tapping_test_final/tremor run preview"
+  }
+}
