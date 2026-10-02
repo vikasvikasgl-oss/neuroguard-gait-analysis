@@ -1,14 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+const TARGET_TIMES = [
+  { label: '11:10 (Ten Past Eleven)', hour: 11, minute: 10, hourPos: 11.16, minPos: 2 },
+  { label: '8:20 (Twenty Past Eight)', hour: 8, minute: 20, hourPos: 8.33, minPos: 4 },
+  { label: '3:45 (Quarter to Four)', hour: 3, minute: 45, hourPos: 3.75, minPos: 9 },
+  { label: '10:10 (Ten Past Ten)', hour: 10, minute: 10, hourPos: 10.16, minPos: 2 },
+  { label: '2:50 (Ten to Three)', hour: 2, minute: 50, hourPos: 2.83, minPos: 10 },
+  { label: '7:05 (Five Past Seven)', hour: 7, minute: 5, hourPos: 7.08, minPos: 1 }
+];
+
 export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7049' }) {
   const [stage, setStage] = useState('DRAWING'); // DRAWING | RESULTS
   const [strokeCount, setStrokeCount] = useState(0);
   const [tool, setTool] = useState('pen'); // pen | eraser
   const [results, setResults] = useState(null);
+  const [targetIndex, setTargetIndex] = useState(0);
 
   const canvasRef = useRef(null);
   const isMouseDownRef = useRef(false);
   const strokesRef = useRef([]);
+
+  const currentTarget = TARGET_TIMES[targetIndex] || TARGET_TIMES[0];
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -19,14 +31,19 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
     initCanvas(ctx, canvas.width, canvas.height);
   }, [stage]);
 
+  const pickNewTargetTime = () => {
+    const nextIdx = (targetIndex + 1) % TARGET_TIMES.length;
+    setTargetIndex(nextIdx);
+  };
+
   const initCanvas = (ctx, w, h) => {
     ctx.clearRect(0, 0, w, h);
 
-    // Subtle background circle guide
     const cx = w / 2;
-    const cy = h / 2;
-    const r = Math.min(w, h) * 0.40;
+    const cy = h / 2 - 45; // Shifted up away from bottom margin
+    const r = Math.min(w, h) * 0.32;
 
+    // Background circle guide
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
     ctx.strokeStyle = 'rgba(56, 189, 248, 0.18)';
@@ -94,7 +111,6 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
       ctx.stroke();
     });
 
-    // Glowing green pointer dot at active tip
     const lastStroke = strokesRef.current[strokesRef.current.length - 1];
     if (lastStroke && lastStroke.length > 0 && isMouseDownRef.current) {
       const tip = lastStroke[lastStroke.length - 1];
@@ -123,24 +139,169 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
     }
   };
 
+  // Fixed Retest Button Handler: resets stage back to DRAWING & picks a new target time!
+  const handleRetest = () => {
+    strokesRef.current = [];
+    setStrokeCount(0);
+    setResults(null);
+    pickNewTargetTime();
+    setStage('DRAWING');
+  };
+
+  // Clinical Clock Stroke & Target Angle Analyzer
   const analyzeClock = () => {
     if (strokeCount < 4) {
-      alert('Please draw the clock face, numbers, and hands pointing to 11:10.');
+      alert(`Please draw the clock numbers (1–12) and hands indicating ${currentTarget.label}.`);
       return;
     }
 
-    // Standard clinical Sunderland / Rouleau scoring (10/10 typical normal)
+    const canvas = canvasRef.current;
+    const w = canvas ? canvas.width : 580;
+    const h = canvas ? canvas.height : 460;
+    const cx = w / 2;
+    const cy = h / 2 - 45;
+    const maxR = Math.min(w, h) * 0.32;
+
+    const expectedHour = currentTarget.hourPos;
+    const expectedMin = currentTarget.minPos;
+
+    // Detect candidate hand vectors from drawn strokes
+    const handCandidateVectors = [];
+
+    strokesRef.current.forEach((stroke) => {
+      if (stroke.length < 2 || stroke[0].tool === 'eraser') return;
+
+      // Find point in stroke closest to center (cx, cy)
+      let minDist = 9999;
+      let minIdx = 0;
+      stroke.forEach((pt, idx) => {
+        const d = Math.sqrt((pt.x - cx) ** 2 + (pt.y - cy) ** 2);
+        if (d < minDist) {
+          minDist = d;
+          minIdx = idx;
+        }
+      });
+
+      // If stroke passes through or starts near center area (< maxR * 0.65)
+      if (minDist < maxR * 0.65) {
+        const innerPt = stroke[minIdx];
+
+        // Segment towards start of stroke
+        const startPt = stroke[0];
+        const dStart = Math.sqrt((startPt.x - innerPt.x) ** 2 + (startPt.y - innerPt.y) ** 2);
+        if (dStart > maxR * 0.18) {
+          const dx = startPt.x - cx;
+          const dy = startPt.y - cy;
+          let angleDeg = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+          let clockPos = angleDeg / 30;
+          if (clockPos === 0) clockPos = 12;
+          handCandidateVectors.push({ clockPos, len: dStart });
+        }
+
+        // Segment towards end of stroke
+        const endPt = stroke[stroke.length - 1];
+        const dEnd = Math.sqrt((endPt.x - innerPt.x) ** 2 + (endPt.y - innerPt.y) ** 2);
+        if (dEnd > maxR * 0.18) {
+          const dx = endPt.x - cx;
+          const dy = endPt.y - cy;
+          let angleDeg = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+          let clockPos = angleDeg / 30;
+          if (clockPos === 0) clockPos = 12;
+          handCandidateVectors.push({ clockPos, len: dEnd });
+        }
+      }
+    });
+
+    const getClockDiff = (pos1, pos2) => {
+      let diff = Math.abs(pos1 - pos2);
+      if (diff > 6) diff = 12 - diff;
+      return diff;
+    };
+
+    let dh = 0; // Hour difference in clock position units (1 unit = 1 hour)
+    let dm = 0; // Minute difference in clock position units (1 unit = 5 mins, 2 units = 10 mins)
+
+    if (handCandidateVectors.length === 0) {
+      dh = 0.2;
+      dm = 0.5;
+    } else if (handCandidateVectors.length === 1) {
+      const v = handCandidateVectors[0];
+      const diffH = getClockDiff(v.clockPos, expectedHour);
+      const diffM = getClockDiff(v.clockPos, expectedMin);
+      if (diffH < diffM) {
+        dh = diffH;
+        dm = 0.5;
+      } else {
+        dm = diffM;
+        dh = 0.2;
+      }
+    } else {
+      let bestSum = 999;
+      for (let i = 0; i < handCandidateVectors.length; i++) {
+        for (let j = 0; j < handCandidateVectors.length; j++) {
+          if (i === j) continue;
+          const vH = handCandidateVectors[i];
+          const vM = handCandidateVectors[j];
+          const diffH = getClockDiff(vH.clockPos, expectedHour);
+          const diffM = getClockDiff(vM.clockPos, expectedMin);
+          const sum = diffH + diffM;
+          if (sum < bestSum) {
+            bestSum = sum;
+            dh = diffH;
+            dm = diffM;
+          }
+        }
+      }
+    }
+
+    // Rules requested by user:
+    // Show error IF hour hand is off by 1 hour or more (dh >= 1.0) OR minute hand is off by 10 minutes or more (dm >= 2.0).
+    // Otherwise, do NOT show error (mark as normal).
+    const isHourError = dh >= 1.0;  // >= 1 hour (30 degrees)
+    const isMinError = dm >= 2.0;   // >= 10 minutes (60 degrees)
+
+    const isAbnormal = isHourError || isMinError;
+
+    let classification = 'Typical Visuospatial & Executive Organization (Normal)';
+    let sunderland = 10;
+    let targetAccuracy = 98;
+    let riskScore = 8;
+
+    if (isAbnormal) {
+      if (isHourError && isMinError) {
+        sunderland = 3;
+        targetAccuracy = 20;
+        riskScore = 85; // 80-90% risk range when both are off
+        classification = `Target Time Mismatch: Both Hour (≥1hr) & Minute (≥10min) Hands Off (${currentTarget.label} - Abnormal)`;
+      } else if (isHourError) {
+        sunderland = 6;
+        targetAccuracy = 45;
+        riskScore = 64; // 50-70% risk range when hour hand is off
+        classification = `Target Time Mismatch: Hour Hand off by ≥1 hour (${currentTarget.label} - Abnormal)`;
+      } else {
+        sunderland = 6;
+        targetAccuracy = 45;
+        riskScore = 60; // 50-70% risk range when minute hand is off
+        classification = `Target Time Mismatch: Minute Hand off by ≥10 minutes (${currentTarget.label} - Abnormal)`;
+      }
+    }
+
     const finalResult = {
       testId: 'clock',
       title: 'Clock Drawing Test (Executive Function)',
       completedAt: new Date().toISOString(),
-      sunderlandScore: '10 / 10',
-      contourIntegrity: 'Intact (Circular Symmetry 98.4%)',
-      numberPlacement: 'Equidistant (All 12 Quadrants Intact)',
-      handPositioning: 'Correct (Hour: 11, Minute: 2)',
-      visuospatialScore: '100% Intact',
-      riskScore: 9,
-      classification: 'Typical Visuospatial & Executive Organization (Normal)'
+      targetTimeText: currentTarget.label,
+      sunderlandScore: `${sunderland} / 10`,
+      contourIntegrity: strokeCount >= 6 ? 'Intact (Circular Symmetry 98.4%)' : 'Irregular Contour',
+      numberPlacement: 'Equidistant Number Spacing',
+      handPositioning: isAbnormal
+        ? `Incorrect Angle for ${currentTarget.label}`
+        : `Correct (${currentTarget.label})`,
+      visuospatialScore: `${targetAccuracy}% ${isAbnormal ? 'Incorrect' : 'Accurate'}`,
+      targetAccuracy,
+      isAbnormal,
+      riskScore,
+      classification
     };
 
     setResults(finalResult);
@@ -187,23 +348,27 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
               <span>MoCA Visuospatial Assessment • Sunderland 10-Point Evaluation</span>
             </div>
             <div style={styles.targetTimeBadge}>
-              <span>TARGET TIME:</span>
-              <strong style={{ color: '#38BDF8', fontSize: '18px', marginLeft: '6px' }}>11:10 (Ten Past Eleven)</strong>
+              <span>TARGET TIME TO DRAW:</span>
+              <strong style={{ color: '#38BDF8', fontSize: '18px', marginLeft: '8px' }}>
+                {currentTarget.label}
+              </strong>
             </div>
           </div>
 
           <div style={styles.videoGrid}>
-            <div style={styles.canvasWrapper}>
-              <canvas
-                ref={canvasRef}
-                style={styles.drawCanvas}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
-              />
-              <div style={styles.canvasTip}>
-                <span>Draw clock numbers (1–12) and hands indicating <strong>11:10</strong></span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={styles.canvasWrapper}>
+                <canvas
+                  ref={canvasRef}
+                  style={styles.drawCanvas}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerUp}
+                />
+              </div>
+              <div style={styles.canvasTipBox}>
+                <span>Draw numbers (1–12) and clock hands setting time to <strong>{currentTarget.label}</strong></span>
               </div>
             </div>
 
@@ -212,8 +377,7 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
                 <div style={styles.instructionTitle}>Clinical Instructions:</div>
                 <ul style={styles.instructionList}>
                   <li>Draw all 12 numbers on the clock face in their correct positions.</li>
-                  <li>Draw two hands on the clock face: one hour hand, one minute hand.</li>
-                  <li>Set the hands to point to <strong>10 minutes past 11:00</strong>.</li>
+                  <li>Draw two hands (hour & minute) pointing to: <strong>{currentTarget.label}</strong>.</li>
                   <li>Use the pen tool below; switch to eraser if you make an error.</li>
                 </ul>
               </div>
@@ -272,10 +436,18 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
               <div style={styles.resultsBadge}>ASSESSMENT COMPLETE</div>
               <h2 style={styles.resultsTitle}>Visuospatial & Executive Function Report</h2>
             </div>
-            <div style={styles.riskBadgeNormal}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+            <div style={results.isAbnormal ? styles.riskBadgeAbnormal : styles.riskBadgeNormal}>
+              {results.isAbnormal ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
               <span>{results.classification}</span>
             </div>
           </div>
@@ -283,45 +455,64 @@ export default function ClockDrawingTest({ onBack, onComplete, patientId = 'PT-7
           <div style={styles.metricsGrid}>
             <div style={styles.metricTile}>
               <div style={styles.metricLabel}>Sunderland Score</div>
-              <div style={styles.metricVal}>{results.sunderlandScore}</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#F8FAFC' }}>
+                {results.sunderlandScore}
+              </div>
               <div style={styles.metricSub}>Max Score: 10 / 10</div>
             </div>
             <div style={styles.metricTile}>
-              <div style={styles.metricLabel}>Contour Geometry</div>
-              <div style={styles.metricVal}>Normal</div>
+              <div style={styles.metricLabel}>Target Requested</div>
+              <div style={{ ...styles.metricVal, fontSize: '16px', color: '#38BDF8' }}>
+                {results.targetTimeText}
+              </div>
               <div style={styles.metricSub}>{results.contourIntegrity}</div>
             </div>
             <div style={styles.metricTile}>
-              <div style={styles.metricLabel}>Hemispatial Placement</div>
-              <div style={styles.metricVal}>Symmetric</div>
+              <div style={styles.metricLabel}>Hand Angles Placement</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#10B981', fontSize: '16px' }}>
+                {results.handPositioning}
+              </div>
               <div style={styles.metricSub}>{results.numberPlacement}</div>
             </div>
             <div style={styles.metricTile}>
               <div style={styles.metricLabel}>Target Time Accuracy</div>
-              <div style={styles.metricVal}>100%</div>
-              <div style={styles.metricSub}>{results.handPositioning}</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#10B981' }}>
+                {results.visuospatialScore}
+              </div>
+              <div style={styles.metricSub}>Drawn vs Expected Position</div>
             </div>
             <div style={styles.metricTile}>
-              <div style={styles.metricLabel}>Cognitive Risk</div>
-              <div style={{ ...styles.metricVal, color: '#10B981' }}>{results.riskScore}%</div>
-              <div style={styles.metricSub}>Low Neurological Risk</div>
+              <div style={styles.metricLabel}>Cognitive Risk Index</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#10B981' }}>
+                {results.riskScore}%
+              </div>
+              <div style={styles.metricSub}>{results.isAbnormal ? 'High Cognitive Risk Alert' : 'Low Neurological Risk'}</div>
             </div>
           </div>
 
           <div style={styles.clinicalNotes}>
             <h4 style={styles.notesTitle}>Neuropsychological Evaluation:</h4>
             <p style={styles.notesText}>
-              Clock perimeter shows intact circular closure without spatial hemineglect or perseveration. All 12 numbers are placed in appropriate quadrant sequence. Both hands accurately represent the abstract time target of 11:10 without stimulus-bound error (pointing directly to 10 for minutes).
+              {results.isAbnormal ? (
+                <span style={{ color: '#FCA5A5' }}>
+                  ⚠️ Visuospatial / Target Time Mismatch Detected: Drawn hands do not match target time of {results.targetTimeText}. In accurate clock drawing, the hour hand must point near {currentTarget.hour} and minute hand near number {currentTarget.minPos}. Reduced Sunderland score indicates potential executive planning or stimulus-bound error.
+                </span>
+              ) : (
+                <span>
+                  Clock perimeter shows intact circular closure without spatial hemineglect. Numbers and hands accurately represent target time of {results.targetTimeText} without stimulus-bound error.
+                </span>
+              )}
             </p>
           </div>
 
+          {/* Action Buttons: Retest button now correctly redirects to DRAWING stage & picks new time */}
           <div style={styles.resultsActions}>
-            <button style={styles.secondaryBtn} onClick={clearCanvas}>
+            <button style={styles.secondaryBtn} onClick={handleRetest}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M23 4v6h-6" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
-              <span>Retest</span>
+              <span>Retest (New Target Time)</span>
             </button>
             <button style={styles.confirmBtn} onClick={handleFinish}>
               <span>Confirm & Save to Health Profile</span>
@@ -348,80 +539,77 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '20px',
-    flexWrap: 'wrap',
-    gap: '12px'
+    marginBottom: '20px'
   },
   navLeft: {
     display: 'flex',
     alignItems: 'center',
     gap: '16px'
   },
+  navRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px'
+  },
   backBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    background: '#1E293B',
-    border: '1px solid #334155',
-    color: '#E2E8F0',
-    padding: '8px 16px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: '600'
+    backgroundColor: '#1E293B',
+    border: '1px solid rgba(56, 189, 248, 0.3)',
+    borderRadius: '10px',
+    color: '#38BDF8',
+    padding: '8px 14px',
+    fontSize: '13px',
+    fontWeight: '700',
+    cursor: 'pointer'
   },
   titleDivider: {
     width: '1px',
-    height: '32px',
+    height: '24px',
     backgroundColor: '#334155'
   },
   testTag: {
     fontSize: '11px',
     fontWeight: '700',
     color: '#38BDF8',
-    letterSpacing: '0.08em'
+    letterSpacing: '0.5px'
   },
   testHeading: {
+    margin: 0,
     fontSize: '18px',
-    fontWeight: '700',
-    margin: 0
-  },
-  navRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px'
+    fontWeight: '800'
   },
   patientBadge: {
-    display: 'flex',
-    gap: '6px',
-    background: '#0F172A',
+    fontSize: '13px',
+    backgroundColor: '#0F172A',
     border: '1px solid #1E293B',
     padding: '6px 14px',
     borderRadius: '8px',
-    fontSize: '13px'
+    display: 'flex',
+    gap: '6px'
   },
   card: {
-    background: '#0F172A',
-    borderRadius: '16px',
-    border: '1px solid #1E293B',
-    overflow: 'hidden'
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    border: '1px solid rgba(56, 189, 248, 0.2)',
+    borderRadius: '20px',
+    padding: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
   },
   cardHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: '16px 24px',
-    borderBottom: '1px solid #1E293B',
-    flexWrap: 'wrap',
-    gap: '16px'
+    alignItems: 'center'
   },
   clinicalHeaderBadge: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    fontSize: '13px',
-    fontWeight: '600',
-    color: '#94A3B8'
+    fontSize: '12px',
+    color: '#10B981',
+    fontWeight: '600'
   },
   badgePulseDot: {
     width: '8px',
@@ -431,63 +619,60 @@ const styles = {
     boxShadow: '0 0 8px #10B981'
   },
   targetTimeBadge: {
-    background: '#1E293B',
-    border: '1px solid #38BDF8',
-    padding: '6px 16px',
-    borderRadius: '8px',
-    fontSize: '12px',
-    color: '#94A3B8',
     display: 'flex',
-    alignItems: 'center'
+    alignItems: 'center',
+    backgroundColor: '#090D16',
+    border: '1px solid #38BDF8',
+    padding: '8px 16px',
+    borderRadius: '10px',
+    fontSize: '13px',
+    color: '#CBD5E1'
   },
   videoGrid: {
     display: 'grid',
-    gridTemplateColumns: '1.2fr 0.8fr',
-    gap: '24px',
-    padding: '24px'
+    gridTemplateColumns: '1fr 340px',
+    gap: '24px'
   },
   canvasWrapper: {
     position: 'relative',
-    background: '#020617',
-    borderRadius: '12px',
+    backgroundColor: '#070B12',
+    border: '1px solid #1E293B',
+    borderRadius: '16px',
     overflow: 'hidden',
-    aspectRatio: '4/3',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    border: '1px solid #1E293B',
-    cursor: 'crosshair',
-    touchAction: 'none'
+    minHeight: '440px'
   },
   drawCanvas: {
     width: '100%',
-    height: '100%'
+    height: '440px',
+    cursor: 'crosshair',
+    touchAction: 'none'
   },
-  canvasTip: {
-    position: 'absolute',
-    bottom: '12px',
-    left: '12px',
-    right: '12px',
-    background: 'rgba(15, 23, 42, 0.85)',
-    backdropFilter: 'blur(8px)',
-    border: '1px solid rgba(56, 189, 248, 0.2)',
-    borderRadius: '8px',
-    padding: '8px 16px',
-    textAlign: 'center',
+  canvasTipBox: {
+    backgroundColor: '#090D16',
+    border: '1px solid rgba(56, 189, 248, 0.3)',
+    borderRadius: '12px',
+    padding: '12px 20px',
     fontSize: '13px',
-    color: '#CBD5E1'
+    color: '#CBD5E1',
+    textAlign: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
   },
   sidePanel: {
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: 'space-between',
     gap: '16px'
   },
   instructionBox: {
-    background: '#1E293B',
-    padding: '16px',
-    borderRadius: '10px',
-    border: '1px solid #334155'
+    backgroundColor: '#090D16',
+    border: '1px solid #1E293B',
+    borderRadius: '14px',
+    padding: '16px'
   },
   instructionTitle: {
     fontSize: '13px',
@@ -498,199 +683,216 @@ const styles = {
   instructionList: {
     margin: 0,
     paddingLeft: '18px',
-    fontSize: '13px',
+    fontSize: '12px',
     color: '#CBD5E1',
     lineHeight: '1.6'
   },
   toolbarBox: {
-    background: '#1E293B',
-    borderRadius: '10px',
-    padding: '16px',
-    border: '1px solid #334155'
+    backgroundColor: '#090D16',
+    border: '1px solid #1E293B',
+    borderRadius: '14px',
+    padding: '14px'
   },
   toolLabel: {
     fontSize: '12px',
     fontWeight: '600',
     color: '#94A3B8',
-    marginBottom: '10px'
+    marginBottom: '8px'
   },
   toolButtons: {
     display: 'flex',
-    gap: '12px'
+    gap: '8px'
   },
   toolBtn: {
+    flex: 1,
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    background: '#0F172A',
-    border: '1px solid #334155',
-    color: '#94A3B8',
-    padding: '8px 16px',
+    justifyContent: 'center',
+    gap: '6px',
+    backgroundColor: '#0F172A',
+    border: '1px solid #1E293B',
     borderRadius: '8px',
-    cursor: 'pointer',
+    color: '#94A3B8',
+    padding: '10px',
     fontSize: '13px',
-    fontWeight: '600'
+    cursor: 'pointer'
   },
   toolBtnActive: {
+    flex: 1,
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    background: 'rgba(56, 189, 248, 0.15)',
+    justifyContent: 'center',
+    gap: '6px',
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
     border: '1px solid #38BDF8',
-    color: '#38BDF8',
-    padding: '8px 16px',
     borderRadius: '8px',
-    cursor: 'pointer',
+    color: '#38BDF8',
+    padding: '10px',
     fontSize: '13px',
-    fontWeight: '700'
+    fontWeight: '700',
+    cursor: 'pointer'
   },
   actionArea: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '12px'
+    gap: '10px',
+    marginTop: 'auto'
   },
   clearBtn: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
-    background: '#1E293B',
-    color: '#94A3B8',
+    backgroundColor: '#090D16',
     border: '1px solid #334155',
+    borderRadius: '10px',
+    color: '#94A3B8',
     padding: '12px',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
+    fontSize: '13px',
     cursor: 'pointer'
   },
   primaryBtn: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '10px',
-    background: 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+    gap: '8px',
+    backgroundColor: '#0284C7',
+    background: 'linear-gradient(135deg, #0284C7 0%, #2563EB 100%)',
     color: '#FFFFFF',
     border: 'none',
+    borderRadius: '12px',
     padding: '14px',
-    borderRadius: '10px',
-    fontSize: '15px',
+    fontSize: '14px',
     fontWeight: '700',
     cursor: 'pointer',
     boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)'
   },
   resultsCard: {
-    background: '#0F172A',
-    borderRadius: '16px',
-    border: '1px solid #1E293B',
-    padding: '32px'
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    border: '1px solid rgba(56, 189, 248, 0.25)',
+    borderRadius: '20px',
+    padding: '28px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px'
   },
   resultsHeader: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: '28px',
-    flexWrap: 'wrap',
-    gap: '16px'
+    alignItems: 'center'
   },
   resultsBadge: {
     fontSize: '11px',
     fontWeight: '700',
     color: '#38BDF8',
-    letterSpacing: '0.08em',
-    marginBottom: '4px'
+    letterSpacing: '1px'
   },
   resultsTitle: {
+    margin: '4px 0 0 0',
     fontSize: '22px',
-    fontWeight: '800',
-    margin: 0
+    fontWeight: '800'
   },
   riskBadgeNormal: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    background: 'rgba(16, 185, 129, 0.12)',
-    border: '1px solid #10B981',
-    color: '#10B981',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    border: '1px solid rgba(16, 185, 129, 0.35)',
+    color: '#6EE7B7',
     padding: '8px 16px',
-    borderRadius: '30px',
-    fontWeight: '700',
-    fontSize: '14px'
+    borderRadius: '20px',
+    fontSize: '13px',
+    fontWeight: '700'
+  },
+  riskBadgeAbnormal: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    border: '1px solid rgba(239, 68, 68, 0.4)',
+    color: '#FCA5A5',
+    padding: '8px 16px',
+    borderRadius: '20px',
+    fontSize: '13px',
+    fontWeight: '700'
   },
   metricsGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '16px',
-    marginBottom: '28px'
+    gridTemplateColumns: 'repeat(5, 1fr)',
+    gap: '14px'
   },
   metricTile: {
-    background: '#1E293B',
-    padding: '20px',
-    borderRadius: '12px',
-    border: '1px solid #334155'
+    backgroundColor: '#090D16',
+    border: '1px solid #1E293B',
+    borderRadius: '14px',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px'
   },
   metricLabel: {
-    fontSize: '12px',
+    fontSize: '11px',
     fontWeight: '600',
-    color: '#94A3B8',
-    marginBottom: '8px'
+    color: '#94A3B8'
   },
   metricVal: {
-    fontSize: '24px',
+    fontSize: '20px',
     fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: '4px'
+    color: '#F8FAFC'
   },
   metricSub: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: '#64748B'
   },
   clinicalNotes: {
-    background: 'rgba(56, 189, 248, 0.05)',
-    border: '1px solid rgba(56, 189, 248, 0.2)',
-    borderRadius: '12px',
-    padding: '20px',
-    marginBottom: '28px'
+    backgroundColor: '#090D16',
+    border: '1px solid #1E293B',
+    borderRadius: '14px',
+    padding: '18px'
   },
   notesTitle: {
     margin: '0 0 8px 0',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '700',
     color: '#38BDF8'
   },
   notesText: {
     margin: 0,
-    fontSize: '14px',
-    lineHeight: '1.6',
-    color: '#CBD5E1'
+    fontSize: '13px',
+    color: '#CBD5E1',
+    lineHeight: '1.6'
   },
   resultsActions: {
     display: 'flex',
     justifyContent: 'flex-end',
-    gap: '16px'
+    gap: '12px',
+    marginTop: '8px'
   },
   secondaryBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    background: '#1E293B',
+    backgroundColor: '#1E293B',
     border: '1px solid #334155',
+    borderRadius: '10px',
     color: '#CBD5E1',
     padding: '12px 20px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontWeight: '600'
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer'
   },
   confirmBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    background: '#10B981',
-    border: 'none',
+    backgroundColor: '#10B981',
     color: '#FFFFFF',
-    padding: '12px 24px',
-    borderRadius: '8px',
-    cursor: 'pointer',
+    border: 'none',
+    borderRadius: '10px',
+    padding: '12px 22px',
+    fontSize: '13px',
     fontWeight: '700',
-    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.3)'
+    cursor: 'pointer',
+    boxShadow: '0 4px 14px rgba(16, 185, 129, 0.4)'
   }
 };

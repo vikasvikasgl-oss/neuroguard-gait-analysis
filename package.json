@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "npm --prefix finger_tapping_test_final/tremor run dev",
+    "server": "npm --prefix finger_tapping_test_final/tremor run server",
+    "init-db": "npm --prefix finger_tapping_test_final/tremor run init-db",
     "build": "npm --prefix finger_tapping_test_final/tremor run build",
     "preview": "npm --prefix finger_tapping_test_final/tremor run preview"
   }

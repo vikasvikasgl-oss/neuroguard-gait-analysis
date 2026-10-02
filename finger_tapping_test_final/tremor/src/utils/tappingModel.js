@@ -3,10 +3,9 @@
  * Based on MDS-UPDRS Part III Item 3.4 (Finger Tapping) clinical criteria.
  * 
  * Accurately differentiates:
- * - Typical Motor Dexterity Pattern (Low Risk: 8% – 25%) when tapping is smooth, fast, and steady
+ * - Typical Motor Dexterity Pattern (Low Risk: 8% – 25%) when tapping is smooth, fast (> 25-30 taps), and steady
  * - Mild Bilateral Motor Asymmetry (Moderate Risk: 30% – 50%) for slight slowing or asymmetry
- * - Parkinsonian Motor Pattern Detected (High Risk: 65% – 95%) when excessive hand shaking, severe tremor,
- *   rapid amplitude decay, dysrhythmia, or freezing episodes are present.
+ * - Parkinsonian Motor Pattern Detected (High Risk: 65% – 95%) when severe hand shaking, rapid amplitude decay, or freezing episodes are present.
  */
 
 export const HEALTHY_TAPPING_BASELINE = {
@@ -35,66 +34,76 @@ export function predictParkinsonianPattern(features = {}) {
   const validTaps = typeof features.validTaps === 'number' ? features.validTaps : 40;
   const handShake_score = typeof features.handShake_score === 'number' ? features.handShake_score : tremor_metric;
 
-  // Base healthy risk baseline (10% - 14%)
-  let riskScore = 0.12;
+  // Base healthy risk baseline (8% - 12%)
+  let riskScore = 0.10;
 
-  // 1. PRIMARY DRIVER: EXCESSIVE HAND SHAKING / TREMOR
-  // Only triggers high risk when hand is shaking or moving erratically
-  if (handShake_score >= 32 || tremor_metric >= 30) {
-    // Severe shaking / marked oscillatory tremor
-    riskScore += 0.42 + Math.min(0.25, (Math.max(handShake_score, tremor_metric) - 30) * 0.015);
-  } else if (handShake_score >= 20 || tremor_metric >= 20) {
-    // Moderate involuntary shaking
+  // 1. TAP COUNT & SPEED PROTECTIVE FACTOR (> 28 - 30 taps indicates strong motor drive)
+  const isHighTapCount = validTaps >= 28 || frequency >= 2.0;
+
+  // 2. PRIMARY DRIVER: EXCESSIVE HAND SHAKING / TREMOR
+  if (handShake_score >= 40 || tremor_metric >= 40) {
+    // Severe, uncoordinated shaking
+    riskScore += 0.45;
+  } else if (handShake_score >= 25 || tremor_metric >= 25) {
+    // Moderate shaking - offset if tap count is high (> 30 taps)
+    if (isHighTapCount && amplitude_dec < 0.20) {
+      riskScore += 0.08; // Slight bump, kept low because high tap speed indicates intact motor control
+    } else {
+      riskScore += 0.22;
+    }
+  } else if (handShake_score <= 15 && tremor_metric <= 15) {
+    riskScore -= 0.05;
+  }
+
+  // 3. BRADYKINESIA (Slow tapping speed < 1.8 Hz)
+  if (frequency < 1.6) {
+    riskScore += 0.25; // Severe bradykinesia
+  } else if (frequency < 2.2 && !isHighTapCount) {
+    riskScore += 0.10;
+  } else if (frequency >= 2.2 || isHighTapCount) {
+    riskScore -= 0.06; // Good tapping speed reduces risk
+  }
+
+  // 4. LOW TAP COUNT IN 15 SECONDS (< 20 taps)
+  if (validTaps < 16) {
     riskScore += 0.22;
-  } else if (handShake_score <= 12 && tremor_metric <= 12) {
-    // Steady, calm hand reduces risk
+  } else if (validTaps < 25) {
+    riskScore += 0.08;
+  } else if (validTaps >= 30) {
+    riskScore -= 0.12; // Excellent tap count (> 30 taps) strongly indicates healthy motor function
+  }
+
+  // 5. PROGRESSIVE FATIGUE / AMPLITUDE DECREMENT (> 25% reduction between halves)
+  if (amplitude_dec > 0.35) {
+    riskScore += 0.22;
+  } else if (amplitude_dec > 0.22) {
+    riskScore += 0.08;
+  } else if (amplitude_dec <= 0.12) {
     riskScore -= 0.04;
   }
 
-  // 2. BRADYKINESIA (Slow tapping speed < 2.2 Hz)
-  if (frequency < 1.8) {
-    riskScore += 0.24; // Severe bradykinesia
-  } else if (frequency < 2.5) {
-    riskScore += 0.12; // Mild slowing
-  } else if (frequency >= 3.4) {
-    riskScore -= 0.04; // Normal rapid cadence reduces risk
+  // 6. RHYTHM VARIABILITY / DYSRHYTHMIA (Rhythm CV > 22%)
+  if (rhythm_cv > 0.30) {
+    riskScore += 0.15;
+  } else if (rhythm_cv > 0.20 && !isHighTapCount) {
+    riskScore += 0.06;
+  } else if (rhythm_cv <= 0.15) {
+    riskScore -= 0.04;
   }
 
-  // 3. LOW TAP COUNT IN 15 SECONDS (< 20 taps)
-  if (validTaps < 16) {
-    riskScore += 0.20;
-  } else if (validTaps < 25) {
-    riskScore += 0.08;
-  } else if (validTaps >= 36) {
-    riskScore -= 0.04; // Plentiful taps indicates healthy motor motor drive
-  }
-
-  // 4. PROGRESSIVE FATIGUE / AMPLITUDE DECREMENT (> 25% reduction between halves)
-  if (amplitude_dec > 0.35) {
-    riskScore += 0.22; // Severe amplitude reduction (hallmark of Parkinsonian hypometria)
-  } else if (amplitude_dec > 0.22) {
-    riskScore += 0.10;
-  } else if (amplitude_dec <= 0.10) {
-    riskScore -= 0.03; // Maintained amplitude reduces risk
-  }
-
-  // 5. RHYTHM VARIABILITY / DYSRHYTHMIA (Rhythm CV > 20%)
-  if (rhythm_cv > 0.28) {
-    riskScore += 0.16;
-  } else if (rhythm_cv > 0.18) {
-    riskScore += 0.08;
-  } else if (rhythm_cv <= 0.12) {
-    riskScore -= 0.03;
-  }
-
-  // 6. MOTOR ARRESTS / FREEZING EPISODES
+  // 7. MOTOR ARRESTS / FREEZING EPISODES
   if (pauseCount >= 3) {
-    riskScore += 0.24; // Multiple motor freezes
+    riskScore += 0.25;
   } else if (pauseCount >= 1) {
-    riskScore += 0.10;
+    riskScore += 0.08;
   }
 
-  // Strict bounding: normal performance stays low (8% - 24%), abnormal shaking reaches 65% - 94%
+  // If tap count > 30 and no severe freezing, cap maximum risk to keep it in Typical/Low-Risk range (< 30%)
+  if (validTaps >= 28 && pauseCount === 0 && amplitude_dec < 0.25) {
+    riskScore = Math.min(0.28, riskScore);
+  }
+
+  // Strict bounding: normal performance stays low (8% - 24%)
   const finalProbability = Math.max(0.06, Math.min(0.95, parseFloat(riskScore.toFixed(3))));
   return finalProbability;
 }
@@ -111,7 +120,6 @@ export function computeBilateralScreening(rightFeatures, leftFeatures) {
   const rightProb = rightFeatures ? predictParkinsonianPattern(rightFeatures) : 0.12;
   const leftProb = leftFeatures ? predictParkinsonianPattern(leftFeatures) : 0.12;
 
-  // Asymmetric onset is typical in early Parkinsonian motor changes
   const overallProb = Math.max(rightProb, leftProb);
   const confidencePercent = Math.round(overallProb * 100);
 
@@ -126,19 +134,15 @@ export function computeBilateralScreening(rightFeatures, leftFeatures) {
   const ampAsym = Math.abs(rAmp - lAmp).toFixed(2);
   const rhythmAsym = Math.abs(rCV - lCV).toFixed(2);
 
-  // Classification Thresholds
   let classification = "Typical Motor Dexterity Pattern";
   let isParkinsonian = false;
 
-  if (overallProb >= 0.60) {
-    // Only triggers when significant shaking, tremor, or severe bradykinesia occurred
+  if (overallProb >= 0.55) {
     classification = "Parkinsonian Motor Pattern Detected";
     isParkinsonian = true;
-  } else if (overallProb >= 0.35 || parseFloat(freqAsym) >= 1.5) {
-    // Moderate hesitation or noticeable asymmetry between right and left hand
+  } else if (overallProb >= 0.32 || parseFloat(freqAsym) >= 1.5) {
     classification = "Mild Bilateral Motor Asymmetry";
   } else {
-    // Normal healthy tapping: low values
     classification = "Typical Motor Dexterity Pattern";
   }
 

@@ -60,7 +60,7 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
           landmarkerRef.current = instance;
           setModelLoading(false);
         } else {
-          try { instance.close(); } catch (e) {}
+          try { instance.close(); } catch (e) { }
         }
       } catch (err) {
         console.warn('Tremor Landmarker init notice:', err);
@@ -77,7 +77,7 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
       stopCamera();
       if (frameRequestRef.current) cancelAnimationFrame(frameRequestRef.current);
       if (landmarkerRef.current) {
-        try { landmarkerRef.current.close(); } catch (e) {}
+        try { landmarkerRef.current.close(); } catch (e) { }
         landmarkerRef.current = null;
       }
     };
@@ -101,7 +101,7 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => videoRef.current?.play().catch(() => {});
+        videoRef.current.onloadedmetadata = () => videoRef.current?.play().catch(() => { });
       }
     } catch (e) {
       setMockActive(true);
@@ -171,7 +171,7 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
           handleSample(now, mockPt);
         } else if (video && video.readyState >= 2 && landmarkerRef.current) {
           let res = null;
-          try { res = landmarkerRef.current.detectForVideo(video, now); } catch (e) {}
+          try { res = landmarkerRef.current.detectForVideo(video, now); } catch (e) { }
 
           if (res && res.landmarks && res.landmarks.length > 0) {
             setHandDetected(true);
@@ -247,34 +247,123 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
 
   const finishTest = () => {
     isRecordingRef.current = false;
-    const data = rawMotionRef.current;
-    const duration = data.length > 1 ? (data[data.length - 1].time - data[0].time) / 1000 : 10;
+    const rawData = rawMotionRef.current;
+    const duration = rawData.length > 1 ? (rawData[rawData.length - 1].time - rawData[0].time) / 1000 : 10;
 
-    let displacement = 0;
+    if (rawData.length < 10) {
+      alert("Insufficient motion data captured. Please keep your hand in camera view.");
+      setStage('READY');
+      return;
+    }
+
+    // 1. Responsive EMA smoothing filter (alpha=0.65 preserves hand motion while filtering sensor jitter)
+    const smoothedData = [rawData[0]];
+    const alpha = 0.65;
+    for (let i = 1; i < rawData.length; i++) {
+      const prev = smoothedData[i - 1];
+      const curr = rawData[i];
+      smoothedData.push({
+        time: curr.time,
+        x: prev.x * (1 - alpha) + curr.x * alpha,
+        y: prev.y * (1 - alpha) + curr.y * alpha
+      });
+    }
+
+    // 2. Physical motion analysis with calibrated noise floor
+    let totalDisplacement = 0;
     let reversals = 0;
-    for (let i = 1; i < data.length; i++) {
-      const dy = data[i].y - data[i - 1].y;
-      displacement += Math.abs(dy);
-      if (i >= 2) {
-        const prevDy = data[i - 1].y - data[i - 2].y;
-        if (dy * prevDy < 0 && Math.abs(dy) > 0.0025) reversals++;
+    let peakToTroughAmpSum = 0;
+
+    // Calibrated deadband noise floor: zero out static camera noise (< 0.0012 ~ 0.6px) while capturing physical hand movement
+    const NOISE_GATE = 0.0012;
+    const MIN_REVERSAL_AMP = 0.0018; // ~0.9px minimum peak-to-trough amplitude for tremor oscillation
+
+    let currentDirection = 0; // +1 or -1
+    let lastPeakY = smoothedData[0].y;
+
+    for (let i = 1; i < smoothedData.length; i++) {
+      const dx = smoothedData[i].x - smoothedData[i - 1].x;
+      const dy = smoothedData[i].y - smoothedData[i - 1].y;
+      const stepDist = Math.hypot(dx, dy);
+
+      // Add to displacement if motion exceeds camera noise floor
+      if (stepDist > NOISE_GATE) {
+        totalDisplacement += (stepDist - NOISE_GATE);
+      }
+
+      // Track vertical oscillation reversals
+      const dir = Math.sign(dy);
+      if (dir !== 0) {
+        if (currentDirection === 0) {
+          currentDirection = dir;
+          lastPeakY = smoothedData[i].y;
+        } else if (dir !== currentDirection) {
+          const oscAmplitude = Math.abs(smoothedData[i].y - lastPeakY);
+          if (oscAmplitude >= MIN_REVERSAL_AMP) {
+            reversals++;
+            peakToTroughAmpSum += oscAmplitude;
+          }
+          currentDirection = dir;
+          lastPeakY = smoothedData[i].y;
+        }
       }
     }
 
-    const shakeScore = Math.min(85, Math.round((displacement / duration) * 85 + (reversals / duration) * 2));
-    const tremorFrequency = parseFloat((reversals / (duration * 2)).toFixed(1)) || 8.4;
-    const isExcessive = shakeScore >= 28;
+    const reversalsPerSec = reversals / Math.max(1, duration);
+    const normDisplacement = (totalDisplacement / Math.max(1, duration)) * 160;
+    const normReversals = reversalsPerSec * 5.5;
+
+    // Instability Score (0 to 100)
+    const shakeScore = Math.min(98, Math.max(3, Math.round(normDisplacement + normReversals)));
+
+    // Tremor Frequency calculation (Hz)
+    let dominantFreq = 7.8;
+    if (reversalsPerSec >= 1.5 && normDisplacement >= 5.0) {
+      dominantFreq = parseFloat((reversalsPerSec / 1.6).toFixed(1));
+      dominantFreq = Math.min(10.5, Math.max(3.8, dominantFreq));
+    } else if (reversalsPerSec > 0.4) {
+      dominantFreq = parseFloat((7.2 + (reversalsPerSec * 0.3)).toFixed(1));
+    }
+
+    // Detection Thresholds:
+    // Still hand: shakeScore < 16, normDisplacement < 10 -> Risk 6-12% (Normal)
+    // Mild Tremor: shakeScore 16-44 -> Risk 32-65%
+    // Severe Tremor: shakeScore >= 45 -> Risk 68-95%
+
+    const isSevereTremor = shakeScore >= 45 || normDisplacement >= 30;
+    const isMildTremor = !isSevereTremor && (shakeScore >= 16 || normDisplacement >= 10 || reversalsPerSec >= 1.8);
+    const isExcessive = isSevereTremor || isMildTremor;
+
+    let classification = "Normal Physiological Tremor (Typical)";
+    let riskScore = 8;
+
+    if (isSevereTremor) {
+      classification = "Parkinsonian / Essential Tremor Pattern Detected";
+      riskScore = Math.min(95, 68 + Math.round((shakeScore - 45) * 0.55));
+    } else if (isMildTremor) {
+      classification = "Mild Kinetic / Light Postural Tremor Detected";
+      riskScore = Math.min(65, 32 + Math.round((shakeScore - 16) * 1.15));
+    } else {
+      classification = "Normal Physiological Tremor (Typical)";
+      riskScore = Math.min(14, Math.max(4, Math.round(shakeScore * 0.8 + 2)));
+    }
+
+    const avgAmpMm = isExcessive
+      ? (0.50 + (peakToTroughAmpSum / Math.max(1, reversals)) * 140).toFixed(2)
+      : (0.20 + shakeScore * 0.025).toFixed(2);
 
     const finalResult = {
       testId: 'tremor',
       title: 'Hand Tremor Assessment',
       completedAt: new Date().toISOString(),
       shakeScore,
-      dominantFrequency: isExcessive ? 4.8 : Math.max(7.2, tremorFrequency),
-      amplitudeMm: (shakeScore * 0.08).toFixed(2),
+      dominantFrequency: dominantFreq,
+      amplitudeMm: avgAmpMm,
       isExcessive,
-      riskScore: isExcessive ? Math.min(88, 65 + Math.round((shakeScore - 28) * 0.8)) : Math.max(8, Math.round(shakeScore * 0.9)),
-      classification: isExcessive ? 'Parkinsonian Tremor Pattern Detected' : 'Normal Physiological Tremor (Typical)'
+      isMildTremor,
+      isSevereTremor,
+      riskScore,
+      classification
     };
 
     setResults(finalResult);
@@ -419,17 +508,17 @@ export default function TremorAssessment({ onBack, onComplete, patientId = 'PT-7
                   <td style={styles.tdCenter}>7.0 – 12.0 Hz</td>
                   <td style={styles.tdRight}>
                     <span style={results.isExcessive ? styles.tagWarn : styles.tagGood}>
-                      {results.isExcessive ? 'Pathological (4-6 Hz)' : 'Normal'}
+                      {results.isExcessive ? (results.isSevereTremor ? 'Pathological (4-6 Hz)' : 'Mild Tremor (4-7 Hz)') : 'Normal'}
                     </span>
                   </td>
                 </tr>
                 <tr>
                   <td style={styles.tdBold}>Tremor Instability Score</td>
                   <td style={styles.tdCenter}>{results.shakeScore} / 100</td>
-                  <td style={styles.tdCenter}>&lt; 20 / 100</td>
+                  <td style={styles.tdCenter}>&lt; 15 / 100</td>
                   <td style={styles.tdRight}>
                     <span style={results.isExcessive ? styles.tagWarn : styles.tagGood}>
-                      {results.isExcessive ? 'Excessive Shaking' : 'Steady Hand ✓'}
+                      {results.isExcessive ? (results.isSevereTremor ? 'Excessive Shaking' : 'Light Tremor Detected') : 'Steady Hand ✓'}
                     </span>
                   </td>
                 </tr>

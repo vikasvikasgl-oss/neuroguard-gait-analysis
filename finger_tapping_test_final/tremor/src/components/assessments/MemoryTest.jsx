@@ -1,24 +1,51 @@
 import React, { useState, useEffect } from 'react';
 
-const WORD_LIST = ['APPLE', 'RIVER', 'VELVET', 'CHURCH', 'DAISY'];
-const DISTRACTOR_WORDS = ['HAMMER', 'FOREST', 'COTTON', 'CASTLE', 'ROSE', 'PENCIL', 'BRIDGE'];
+const WORD_POOLS = [
+  ['APPLE', 'RIVER', 'VELVET', 'CHURCH', 'DAISY'],
+  ['LION', 'HARBOR', 'SILK', 'TEMPLE', 'TULIP'],
+  ['TIGER', 'MOUNTAIN', 'SATIN', 'CHAPEL', 'ORCHID'],
+  ['EAGLE', 'VALLEY', 'COTTON', 'PALACE', 'JASMINE'],
+  ['DOLPHIN', 'FOREST', 'LINEN', 'TOWER', 'VIOLET'],
+  ['FALCON', 'ISLAND', 'WOOL', 'CASTLE', 'LILY'],
+  ['PANTHER', 'OCEAN', 'DENIM', 'CATHEDRAL', 'ROSE']
+];
+
+const DISTRACTOR_POOL = [
+  'HAMMER', 'BRIDGE', 'PENCIL', 'BUTTON', 'CANDLE', 'MIRROR', 'LANTERN',
+  'WINDOW', 'BOTTLE', 'SPOON', 'BASKET', 'KEY', 'CLOCK', 'GUITAR', 'POCKET',
+  'COMPASS', 'FEATHER', 'DIAMOND', 'SHIELD', 'HELMET', 'MAGNET', 'ANCHOR'
+];
 
 export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }) {
   const [stage, setStage] = useState('STUDY'); // STUDY | DISTRACTION | RECALL | RESULTS
   const [studyTimer, setStudyTimer] = useState(10);
   const [distractionTimer, setDistractionTimer] = useState(8);
+  const [targetWords, setTargetWords] = useState([]);
   const [selectedWords, setSelectedWords] = useState([]);
   const [shuffledOptions, setShuffledOptions] = useState([]);
   const [results, setResults] = useState(null);
 
-  useEffect(() => {
-    // Generate randomized word bank for recall
-    const pool = [...WORD_LIST, ...DISTRACTOR_WORDS];
+  const initializeRandomTest = () => {
+    // 1. Pick a random 5-word target list
+    const randomIndex = Math.floor(Math.random() * WORD_POOLS.length);
+    const selectedTargetList = WORD_POOLS[randomIndex];
+    setTargetWords(selectedTargetList);
+
+    // 2. Pick 7 distinct distractors from distractor pool
+    const shuffledDistractors = [...DISTRACTOR_POOL].sort(() => 0.5 - Math.random());
+    const selectedDistractors = shuffledDistractors.filter((w) => !selectedTargetList.includes(w)).slice(0, 7);
+
+    // 3. Combine and shuffle pool for recall options
+    const pool = [...selectedTargetList, ...selectedDistractors];
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
     }
     setShuffledOptions(pool);
+  };
+
+  useEffect(() => {
+    initializeRandomTest();
   }, []);
 
   // Study timer countdown
@@ -64,8 +91,20 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
   };
 
   const evaluateRecall = () => {
-    const correctCount = selectedWords.filter((w) => WORD_LIST.includes(w)).length;
+    const correctCount = selectedWords.filter((w) => targetWords.includes(w)).length;
     const isNormal = correctCount >= 4;
+    const riskScore =
+      correctCount >= 5 ? 10 :
+      correctCount === 4 ? 20 :
+      correctCount === 3 ? 50 :
+      correctCount === 2 ? 75 : 90;
+
+    const classification =
+      correctCount >= 4
+        ? 'Typical Cognitive Memory Performance (Normal)'
+        : correctCount === 3
+        ? 'Mild Short-Term Retrieval Variance Detected'
+        : 'Elevated Short-Term Memory Impairment Detected';
 
     const finalResult = {
       testId: 'memory',
@@ -73,16 +112,16 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
       completedAt: new Date().toISOString(),
       score: `${correctCount} / 5`,
       accuracyPct: Math.round((correctCount / 5) * 100) + '%',
-      retentionScore: isNormal ? 'Intact (Episodic Encoding High)' : 'Mild Retrieval Hesitation',
+      retentionScore: isNormal ? 'Intact (Episodic Encoding High)' : 'Retrieval Deficit Identified',
       recallLatency: '1.8s avg',
-      riskScore: isNormal ? 10 : 54,
-      classification: isNormal
-        ? 'Typical Cognitive Memory Performance (Normal)'
-        : 'Mild Short-Term Retrieval Variance Detected'
+      riskScore,
+      isAbnormal: !isNormal,
+      classification
     };
 
     setResults(finalResult);
     setStage('RESULTS');
+    if (onComplete) onComplete(finalResult);
   };
 
   const handleFinish = () => {
@@ -95,6 +134,7 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
     setStudyTimer(10);
     setDistractionTimer(8);
     setStage('STUDY');
+    initializeRandomTest();
   };
 
   return (
@@ -142,7 +182,7 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
             <p style={styles.promptSubtitle}>You will be asked to recall them following a brief distraction task.</p>
 
             <div style={styles.wordCardsGrid}>
-              {WORD_LIST.map((word, i) => (
+              {targetWords.map((word, i) => (
                 <div key={i} style={styles.wordCard}>
                   <div style={styles.wordIndex}>0{i + 1}</div>
                   <div style={styles.wordText}>{word}</div>
@@ -234,11 +274,10 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
 
             <div style={styles.progressFooter}>
               <button
-                style={selectedWords.length >= 3 ? styles.submitBtn : styles.disabledSubmitBtn}
-                disabled={selectedWords.length < 3}
+                style={styles.submitBtn}
                 onClick={evaluateRecall}
               >
-                <span>Submit & Calculate Recall Index</span>
+                <span>Submit & Calculate Recall Index ({selectedWords.length}/5 Selected)</span>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <polyline points="9 18 15 12 9 6" />
                 </svg>
@@ -256,8 +295,8 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
               <div style={styles.resultsBadge}>ASSESSMENT COMPLETE</div>
               <h2 style={styles.resultsTitle}>Cognitive Episodic Memory Report</h2>
             </div>
-            <div style={styles.riskBadgeNormal}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+            <div style={results.isAbnormal ? styles.riskBadgeHigh : styles.riskBadgeNormal}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
               <span>{results.classification}</span>
@@ -277,20 +316,28 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
             </div>
             <div style={styles.metricTile}>
               <div style={styles.metricLabel}>Hippocampal Encoding</div>
-              <div style={styles.metricVal}>Intact</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#10B981' }}>
+                {results.isAbnormal ? 'Impaired' : 'Intact'}
+              </div>
               <div style={styles.metricSub}>Free Recall Verified</div>
             </div>
             <div style={styles.metricTile}>
               <div style={styles.metricLabel}>Cognitive Risk</div>
-              <div style={{ ...styles.metricVal, color: '#10B981' }}>{results.riskScore}%</div>
-              <div style={styles.metricSub}>Low Neurological Risk</div>
+              <div style={{ ...styles.metricVal, color: results.isAbnormal ? '#EF4444' : '#10B981' }}>
+                {results.riskScore}%
+              </div>
+              <div style={styles.metricSub}>
+                {results.isAbnormal ? 'Elevated Cognitive Risk' : 'Low Neurological Risk'}
+              </div>
             </div>
           </div>
 
           <div style={styles.clinicalNotes}>
             <h4 style={styles.notesTitle}>Neuropsychological Summary:</h4>
             <p style={styles.notesText}>
-              Patient demonstrated robust verbal memory consolidation. Recall after distraction revealed no significant confabulation or intrusive intrusion errors from the interference list. Working memory and executive retrieval channels are fully preserved.
+              {results.isAbnormal
+                ? 'Patient demonstrated reduced verbal memory retention following distraction pause. Target words were unretrieved, indicating potential short-term retrieval deficits.'
+                : 'Patient demonstrated robust verbal memory consolidation. Recall after distraction revealed no significant confabulation or intrusion errors. Working memory channels are fully preserved.'}
             </p>
           </div>
 
@@ -300,10 +347,10 @@ export default function MemoryTest({ onBack, onComplete, patientId = 'PT-7049' }
                 <path d="M23 4v6h-6" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
-              <span>Retest</span>
+              <span>Retest Memory</span>
             </button>
             <button style={styles.confirmBtn} onClick={handleFinish}>
-              <span>Confirm & Save to Health Profile</span>
+              <span>Confirm & Return to Dashboard</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="9 18 15 12 9 6" />
               </svg>
@@ -611,6 +658,18 @@ const styles = {
     background: 'rgba(16, 185, 129, 0.12)',
     border: '1px solid #10B981',
     color: '#10B981',
+    padding: '8px 16px',
+    borderRadius: '30px',
+    fontWeight: '700',
+    fontSize: '14px'
+  },
+  riskBadgeHigh: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    background: 'rgba(239, 68, 68, 0.12)',
+    border: '1px solid #EF4444',
+    color: '#EF4444',
     padding: '8px 16px',
     borderRadius: '30px',
     fontWeight: '700',

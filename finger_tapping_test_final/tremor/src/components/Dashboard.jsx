@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import DiagnosticReportModal, { calculateMultiModalDiagnosis } from './DiagnosticReportModal.jsx';
 
 export default function Dashboard({
   onStartGaitTest,
@@ -16,9 +17,6 @@ export default function Dashboard({
   onStartSitToStandTest,
   sitToStandCompleted,
   sitToStandResults,
-  onStartPostureTest,
-  postureCompleted,
-  postureResults,
   onStartSpiralTest,
   spiralCompleted,
   spiralResults,
@@ -30,23 +28,39 @@ export default function Dashboard({
   clockResults,
   onStartAttentionTest,
   attentionCompleted,
-  attentionResults
+  attentionResults,
+  onStartOrientationTest,
+  orientationCompleted,
+  orientationResults,
+  onStartAIChat,
+  onStartPatientVitals
 }) {
   const [activeCategory, setActiveCategory] = useState('ALL'); // ALL, MOVEMENT, COGNITIVE
   const [activeSidebar, setActiveSidebar] = useState('dashboard');
   const [isDemoActive, setIsDemoActive] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   const completedCount =
     (gaitCompleted ? 1 : 0) +
     (fingerTappingCompleted ? 1 : 0) +
     (tremorCompleted ? 1 : 0) +
-    (toeTappingCompleted ? 1 : 0) +
-    (sitToStandCompleted ? 1 : 0) +
-    (postureCompleted ? 1 : 0) +
     (spiralCompleted ? 1 : 0) +
     (memoryCompleted ? 1 : 0) +
     (clockCompleted ? 1 : 0) +
-    (attentionCompleted ? 1 : 0);
+    (attentionCompleted ? 1 : 0) +
+    (orientationCompleted ? 1 : 0);
+
+  const diagnosis = calculateMultiModalDiagnosis({
+    gaitResults,
+    fingerTappingResults,
+    tremorResults,
+    spiralResults,
+    memoryResults,
+    orientationResults,
+    clockResults,
+    attentionResults,
+    isDemoActive
+  });
 
   const assessments = [
     {
@@ -86,44 +100,8 @@ export default function Dashboard({
       iconType: 'pulse'
     },
     {
-      id: 'toe-tapping',
-      number: '04',
-      category: 'MOVEMENT',
-      title: 'Toe Tapping Test',
-      subtitle: 'Comp 4',
-      desc: 'Measure lower-extremity motor agility, tap cadence, amplitude, and rhythm.',
-      duration: 'Est. 1–2 min',
-      completed: toeTappingCompleted,
-      isFunctional: true,
-      iconType: 'arrowDown'
-    },
-    {
-      id: 'sit-to-stand',
-      number: '05',
-      category: 'MOVEMENT',
-      title: 'Sit-to-Stand Test',
-      subtitle: 'Comp 6',
-      desc: 'Measure functional lower-body strength, trunk angle dynamics, and transitional balance.',
-      duration: 'Est. 2–3 min',
-      completed: sitToStandCompleted,
-      isFunctional: true,
-      iconType: 'userCheck'
-    },
-    {
-      id: 'posture',
-      number: '06',
-      category: 'MOVEMENT',
-      title: 'Postural Stability Assessment',
-      subtitle: 'Comp 7',
-      desc: 'Track body sway, center-of-mass dispersion, and static balance stability.',
-      duration: 'Est. 1–2 min',
-      completed: postureCompleted,
-      isFunctional: true,
-      iconType: 'shield'
-    },
-    {
       id: 'spiral',
-      number: '07',
+      number: '04',
       category: 'MOVEMENT',
       title: 'Spiral / Handwriting Test',
       subtitle: 'Comp 8',
@@ -135,7 +113,7 @@ export default function Dashboard({
     },
     {
       id: 'memory',
-      number: '08',
+      number: '05',
       category: 'COGNITIVE',
       title: 'Memory Recall Test',
       subtitle: 'Comp 9',
@@ -147,7 +125,7 @@ export default function Dashboard({
     },
     {
       id: 'clock',
-      number: '09',
+      number: '06',
       category: 'COGNITIVE',
       title: 'Clock Drawing Test',
       subtitle: 'Comp 10',
@@ -159,7 +137,7 @@ export default function Dashboard({
     },
     {
       id: 'attention',
-      number: '10',
+      number: '07',
       category: 'COGNITIVE',
       title: 'Attention & Executive Function',
       subtitle: 'Comp 11',
@@ -168,6 +146,18 @@ export default function Dashboard({
       completed: attentionCompleted,
       isFunctional: true,
       iconType: 'zap'
+    },
+    {
+      id: 'orientation',
+      number: '08',
+      category: 'COGNITIVE',
+      title: 'Orientation Test',
+      subtitle: 'Comp 12',
+      desc: 'Evaluate calendar alignment, day of the week, date, and temporal awareness.',
+      duration: 'Est. 1–2 min',
+      completed: orientationCompleted,
+      isFunctional: true,
+      iconType: 'compass'
     }
   ];
 
@@ -210,7 +200,7 @@ export default function Dashboard({
             <span>Dashboard</span>
           </button>
 
-          <button style={styles.navItem} onClick={() => {}}>
+          <button style={styles.navItem} onClick={onStartPatientVitals}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
@@ -218,92 +208,16 @@ export default function Dashboard({
             <span>Patient Vitals</span>
           </button>
 
-          <button style={styles.navItem} onClick={onStartMemoryTest}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M12 6v6l4 2" />
-            </svg>
-            <span>Memory Test</span>
-            <span style={styles.newBadge}>{memoryCompleted ? 'Done' : 'Active'}</span>
-          </button>
 
-          {/* GAIT ANALYSIS - Direct sidebar entry */}
-          <button
-            style={styles.navItemGait}
-            onClick={onStartGaitTest}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" strokeWidth="2">
-              <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            <span style={{ color: '#38BDF8', fontWeight: '700' }}>Gait Analysis (Comp 5)</span>
-            <span style={styles.newBadge}>{gaitCompleted ? 'Done' : 'Active'}</span>
-          </button>
 
-          <button style={styles.navItem} onClick={onStartPostureTest}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-            </svg>
-            <span>Balance Analysis</span>
-            <span style={styles.newBadge}>{postureCompleted ? 'Done' : 'Active'}</span>
-          </button>
-
-          <button style={styles.navItem} onClick={onStartTremorTest}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
-            <span>Tremor Analysis (Comp 2)</span>
-            <span style={styles.newBadge}>{tremorCompleted ? 'Done' : 'Active'}</span>
-          </button>
-
-          {/* FINGER TAPPING - Direct sidebar entry */}
-          <button
-            style={styles.navItemGait}
-            onClick={onStartFingerTappingTest}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" strokeWidth="2">
-              <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0" />
-              <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2" />
-              <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8" />
-              <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
-            </svg>
-            <span style={{ color: '#60A5FA', fontWeight: '700' }}>Finger Tapping (Comp 3)</span>
-            <span style={styles.newBadge}>{fingerTappingCompleted ? 'Done' : 'Active'}</span>
-          </button>
-
-          <button style={styles.navItem} onClick={onStartAttentionTest}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <circle cx="12" cy="12" r="6" />
-              <circle cx="12" cy="12" r="2" />
-            </svg>
-            <span>Attention Analysis (Comp 4)</span>
-            <span style={styles.newBadge}>{attentionCompleted ? 'Done' : 'Active'}</span>
-          </button>
-
-          <button style={styles.navItem} onClick={() => {}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
-            </svg>
-            <span>IoT Vitals Feed</span>
-          </button>
-
-          <button style={styles.navItem} onClick={() => {}}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <span>Emergency SOS</span>
-          </button>
-
-          <button style={styles.navItem} onClick={() => {}}>
+          <button style={styles.navItem} onClick={onStartAIChat}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
             <span>AI Chat Assistant</span>
           </button>
 
-          <button style={styles.navItem} onClick={() => {}}>
+          <button style={styles.navItem} onClick={() => setShowReportModal(true)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
               <polyline points="14 2 14 8 20 8" />
@@ -346,7 +260,7 @@ export default function Dashboard({
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" strokeWidth="2.5">
                 <path d="M20 6L9 17l-5-5" />
               </svg>
-              <span>{completedCount} / 10</span>
+              <span>{completedCount} / {assessments.length}</span>
             </div>
 
             <button
@@ -359,7 +273,7 @@ export default function Dashboard({
               <span>{isDemoActive ? 'Demo Mode Active' : 'Demo Mode'}</span>
             </button>
 
-            <button style={styles.reportBtn}>
+            <button style={styles.reportBtn} onClick={() => setShowReportModal(true)}>
               Screening Report
             </button>
           </div>
@@ -377,7 +291,7 @@ export default function Dashboard({
                 </svg>
                 <span>COMPLETE ASSESSMENT SUITE</span>
               </div>
-              <h1 style={styles.bannerHeading}>All 10 Neurological Screening Tests</h1>
+              <h1 style={styles.bannerHeading}>All {assessments.length} Neurological Screening Tests</h1>
               <p style={styles.bannerDesc}>
                 Standardized digital assessments evaluating motor kinetics and cognitive capabilities.
               </p>
@@ -393,7 +307,7 @@ export default function Dashboard({
                 </svg>
                 {isDemoActive ? 'Demo Mode Active' : 'Enable Demo Mode'}
               </button>
-              <button style={styles.viewReportBtn}>
+              <button style={styles.viewReportBtn} onClick={() => setShowReportModal(true)}>
                 <span>View Report</span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="5" y1="12" x2="19" y2="12" />
@@ -408,19 +322,50 @@ export default function Dashboard({
             <div style={styles.progressHeader}>
               <span style={styles.progressTitle}>Assessment Battery Progress</span>
               <span style={styles.progressStats}>
-                {completedCount} / 10 completed &nbsp;
-                <strong style={{ color: '#F1F5F9' }}>{completedCount * 10}%</strong>
+                {completedCount} / {assessments.length} completed &nbsp;
+                <strong style={{ color: '#F1F5F9' }}>{Math.round((completedCount / assessments.length) * 100)}%</strong>
               </span>
             </div>
             <div style={styles.progressBarTrack}>
               <div
                 style={{
                   ...styles.progressBarFill,
-                  width: `${completedCount * 10}%`
+                  width: `${Math.round((completedCount / assessments.length) * 100)}%`
                 }}
               />
             </div>
           </div>
+
+          {/* 100% COMPLETION / DEMO ALERT BANNER */}
+          {(completedCount === assessments.length || isDemoActive) && (
+            <div style={styles.completionBanner}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={styles.bannerAlertIcon}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.5">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                    <polyline points="22 4 12 14.01 9 11.01" />
+                  </svg>
+                </div>
+                <div>
+                  <div style={styles.bannerAlertTitle}>
+                    {completedCount === assessments.length
+                      ? "100% Assessment Battery Completed!"
+                      : "Demo Synthesis Mode Active"}
+                  </div>
+                  <div style={styles.bannerAlertSub}>
+                    Multi-Modal Diagnosis Calculated: Parkinson's Disease (with 40% Gait Kinematics Weightage) & Alzheimer's Risk Analysis.
+                  </div>
+                </div>
+              </div>
+              <button style={styles.bannerReportBtn} onClick={() => setShowReportModal(true)}>
+                <span>View Parkinson's & Alzheimer's Diagnostic Report</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <polyline points="12 5 19 12 12 19" />
+                </svg>
+              </button>
+            </div>
+          )}
 
           {/* Filter Pills */}
           <div style={styles.filterRow}>
@@ -429,19 +374,19 @@ export default function Dashboard({
                 style={activeCategory === 'ALL' ? styles.filterBtnActive : styles.filterBtn}
                 onClick={() => setActiveCategory('ALL')}
               >
-                All Tests (10)
+                All Tests ({assessments.length})
               </button>
               <button
                 style={activeCategory === 'MOVEMENT' ? styles.filterBtnActive : styles.filterBtn}
                 onClick={() => setActiveCategory('MOVEMENT')}
               >
-                Movement (7)
+                Movement ({assessments.filter((a) => a.category === 'MOVEMENT').length})
               </button>
               <button
                 style={activeCategory === 'COGNITIVE' ? styles.filterBtnActive : styles.filterBtn}
                 onClick={() => setActiveCategory('COGNITIVE')}
               >
-                Cognitive (3)
+                Cognitive ({assessments.filter((a) => a.category === 'COGNITIVE').length})
               </button>
             </div>
             <span style={styles.showingText}>Showing {filtered.length} assessments</span>
@@ -455,7 +400,24 @@ export default function Dashboard({
                 style={{
                   ...styles.assessmentCard,
                   borderColor: item.isFunctional ? '#2563EB' : '#1F2937',
-                  boxShadow: item.isFunctional ? '0 0 20px rgba(37, 99, 235, 0.15)' : 'none'
+                  boxShadow: item.isFunctional ? '0 0 20px rgba(37, 99, 235, 0.15)' : 'none',
+                  cursor: item.isFunctional ? 'pointer' : 'default'
+                }}
+                onClick={() => {
+                  if (!item.isFunctional) return;
+                  switch (item.id) {
+                    case 'gait': onStartGaitTest?.(); break;
+                    case 'finger-tapping': onStartFingerTappingTest?.(); break;
+                    case 'tremor': onStartTremorTest?.(); break;
+                    case 'toe-tapping': onStartToeTappingTest?.(); break;
+                    case 'sit-to-stand': onStartSitToStandTest?.(); break;
+                    case 'spiral': onStartSpiralTest?.(); break;
+                    case 'memory': onStartMemoryTest?.(); break;
+                    case 'clock': onStartClockTest?.(); break;
+                    case 'attention': onStartAttentionTest?.(); break;
+                    case 'orientation': onStartOrientationTest?.(); break;
+                    default: break;
+                  }
                 }}
               >
                 {/* Card Top */}
@@ -508,11 +470,11 @@ export default function Dashboard({
                           case 'tremor': onStartTremorTest?.(); break;
                           case 'toe-tapping': onStartToeTappingTest?.(); break;
                           case 'sit-to-stand': onStartSitToStandTest?.(); break;
-                          case 'posture': onStartPostureTest?.(); break;
                           case 'spiral': onStartSpiralTest?.(); break;
                           case 'memory': onStartMemoryTest?.(); break;
                           case 'clock': onStartClockTest?.(); break;
                           case 'attention': onStartAttentionTest?.(); break;
+                          case 'orientation': onStartOrientationTest?.(); break;
                           default: break;
                         }
                       }}
@@ -550,6 +512,16 @@ export default function Dashboard({
           </div>
         </div>
       </main>
+
+      {/* DIAGNOSTIC SYNTHESIS REPORT MODAL */}
+      {showReportModal && (
+        <DiagnosticReportModal
+          onClose={() => setShowReportModal(false)}
+          diagnosis={diagnosis}
+          completedCount={completedCount}
+          totalTests={assessments.length}
+        />
+      )}
     </div>
   );
 }
@@ -626,6 +598,13 @@ function CardIcon({ type }) {
       return (
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" strokeWidth="2">
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        </svg>
+      );
+    case 'compass':
+      return (
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38BDF8" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" />
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
         </svg>
       );
   }
@@ -916,6 +895,50 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '10px'
+  },
+  completionBanner: {
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    border: '1px solid rgba(16, 185, 129, 0.3)',
+    borderRadius: '14px',
+    padding: '16px 22px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    boxShadow: '0 10px 25px -5px rgba(16, 185, 129, 0.1)'
+  },
+  bannerAlertIcon: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '10px',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  bannerAlertTitle: {
+    fontSize: '0.95rem',
+    fontWeight: '800',
+    color: '#10B981'
+  },
+  bannerAlertSub: {
+    fontSize: '0.78rem',
+    color: '#CBD5E1',
+    marginTop: '2px'
+  },
+  bannerReportBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backgroundColor: '#10B981',
+    color: '#064E3B',
+    border: 'none',
+    padding: '10px 18px',
+    borderRadius: '10px',
+    fontSize: '0.82rem',
+    fontWeight: '800',
+    cursor: 'pointer',
+    flexShrink: 0
   },
   progressHeader: {
     display: 'flex',

@@ -142,45 +142,156 @@ export default function SpiralTest({ onBack, onComplete, patientId = 'PT-7049' }
     }
   };
 
+  const handleRetest = () => {
+    pointsRef.current = [];
+    setPoints([]);
+    setWaveform([]);
+    setDrawingStarted(false);
+    setResults(null);
+    setStage('READY');
+  };
+
   const analyzeDrawing = () => {
     const pts = pointsRef.current;
-    if (pts.length < 25) {
+    if (pts.length < 20) {
       alert('Please trace along the spiral before completing analysis.');
       return;
     }
 
     const canvas = canvasRef.current;
-    const cx = canvas.width / 2;
-    const cy = canvas.height / 2;
+    const width = canvas ? canvas.width : 580;
+    const height = canvas ? canvas.height : 460;
+    const cx = width / 2;
+    const cy = height / 2;
+    const maxRadius = Math.min(width, height) * 0.42;
+    const totalTurns = 3.5;
 
-    // Check for tremors / rapid jitter
-    let jitterSum = 0;
-    let reversals = 0;
-    for (let i = 2; i < pts.length; i++) {
-      const dx1 = pts[i - 1].x - pts[i - 2].x;
-      const dy1 = pts[i - 1].y - pts[i - 2].y;
-      const dx2 = pts[i].x - pts[i - 1].x;
-      const dy2 = pts[i].y - pts[i - 1].y;
-
-      const dot = dx1 * dx2 + dy1 * dy2;
-      if (dot < 0) reversals++;
-      jitterSum += Math.abs(dx2 - dx1) + Math.abs(dy2 - dy1);
+    // 1. Filter / Downsample high-frequency mouse points to uniform spatial resolution (~4px step)
+    const smoothPts = [pts[0]];
+    for (let i = 1; i < pts.length; i++) {
+      const last = smoothPts[smoothPts.length - 1];
+      const dist = Math.hypot(pts[i].x - last.x, pts[i].y - last.y);
+      if (dist >= 3.8) {
+        smoothPts.push(pts[i]);
+      }
     }
 
-    const jitterRatio = jitterSum / pts.length;
-    const isTremulous = jitterRatio > 9.5 || reversals > 28;
+    // 2. Compute RMSE relative to nearest Archimedean Spiral guide loop
+    let sumSqErr = 0;
+    let radialOscillations = 0;
+    let prevRadialDiff = 0;
+    const turnRadii = [[], [], [], []];
+
+    for (let i = 0; i < smoothPts.length; i++) {
+      const dx = smoothPts[i].x - cx;
+      const dy = smoothPts[i].y - cy;
+      const rActual = Math.hypot(dx, dy);
+
+      // Polar angle in [0, 2*PI)
+      let phi = Math.atan2(dy, dx);
+      if (phi < 0) phi += 2 * Math.PI;
+
+      // Find nearest turn loop (turn 0 to 3)
+      let minErrSq = Infinity;
+      let matchedTurn = 0;
+      for (let turn = 0; turn < 4; turn++) {
+        const theta = phi + turn * 2 * Math.PI;
+        const rIdeal = (theta / (totalTurns * 2 * Math.PI)) * maxRadius;
+        const err = rActual - rIdeal;
+        if (err * err < minErrSq) {
+          minErrSq = err * err;
+          matchedTurn = turn;
+        }
+      }
+
+      sumSqErr += minErrSq;
+      turnRadii[matchedTurn].push(rActual);
+
+      if (i > 0) {
+        const prevR = Math.hypot(smoothPts[i - 1].x - cx, smoothPts[i - 1].y - cy);
+        const diff = rActual - prevR;
+        if (prevRadialDiff * diff < 0 && Math.abs(diff) > 1.2) {
+          radialOscillations++;
+        }
+        prevRadialDiff = diff;
+      }
+    }
+
+    const rmse = Math.sqrt(sumSqErr / Math.max(1, smoothPts.length));
+
+    // 3. Compute Jerk & Angular Micro-Jitter on spatial resampled points
+    let secondDiffSum = 0;
+    let directionalChanges = 0;
+
+    for (let i = 2; i < smoothPts.length; i++) {
+      const dx1 = smoothPts[i - 1].x - smoothPts[i - 2].x;
+      const dy1 = smoothPts[i - 1].y - smoothPts[i - 2].y;
+      const dx2 = smoothPts[i].x - smoothPts[i - 1].x;
+      const dy2 = smoothPts[i].y - smoothPts[i - 1].y;
+
+      const d2x = dx2 - dx1;
+      const d2y = dy2 - dy1;
+      secondDiffSum += Math.hypot(d2x, d2y);
+
+      const mag1 = Math.hypot(dx1, dy1);
+      const mag2 = Math.hypot(dx2, dy2);
+      if (mag1 > 1.0 && mag2 > 1.0) {
+        const cosTheta = (dx1 * dx2 + dy1 * dy2) / (mag1 * mag2);
+        const clampedCos = Math.max(-1, Math.min(1, cosTheta));
+        const turnAngle = Math.acos(clampedCos);
+        if (turnAngle > 0.48) { // Genuine sharp corner (>27 deg)
+          directionalChanges++;
+        }
+      }
+    }
+
+    const avgSecondDiff = secondDiffSum / Math.max(1, smoothPts.length - 2);
+    const jerkMetric = Math.round(avgSecondDiff * 24);
+
+    // 4. Tremor Frequency (Hz)
+    const startTime = pts[0]?.t || 0;
+    const endTime = pts[pts.length - 1]?.t || 1000;
+    const totalDurationSec = Math.max(1.0, (endTime - startTime) / 1000);
+    const rawFreq = (directionalChanges * 0.8 + radialOscillations * 0.4) / totalDurationSec;
+    const tremorFreqVal = Math.min(Math.max(rawFreq, 0.4), 9.5);
+
+    // 5. Micrographia Ratio (Constancy of radial loop spacing)
+    let innerAvg = turnRadii[0].length ? turnRadii[0].reduce((a, b) => a + b, 0) / turnRadii[0].length : 40;
+    let outerAvg = turnRadii[3].length ? turnRadii[3].reduce((a, b) => a + b, 0) / turnRadii[3].length : 160;
+    let micrographiaRatio = 0.94;
+    if (innerAvg > 5 && outerAvg > 20) {
+      const idealRatio = 1.0;
+      const actualSpread = outerAvg / (innerAvg * 4.0);
+      micrographiaRatio = Math.max(0.72, Math.min(1.15, actualSpread || idealRatio));
+    }
+
+    // 6. Calibrated Tremor Sensitivity Evaluation
+    // Normal smooth trace: RMSE 3-9px, Jerk 10-38, Tremor Freq < 2.0Hz
+    // Tremulous trace: RMSE > 18px OR Jerk > 50 OR high-freq jitter
+    const rmseRisk = Math.min(100, (rmse / 22) * 50);
+    const jerkRisk = Math.min(100, (jerkMetric / 55) * 50);
+    const jitterRisk = Math.min(100, (directionalChanges / (smoothPts.length * 0.25)) * 50);
+
+    const calculatedRisk = Math.min(95, Math.max(6, Math.round(rmseRisk * 0.45 + jerkRisk * 0.35 + jitterRisk * 0.2)));
+    
+    // Balanced tremor trigger
+    const isTremulous = calculatedRisk >= 48 || jerkMetric >= 52 || (rmse > 16.0 && jerkMetric > 40);
 
     const finalResult = {
       testId: 'spiral',
       title: 'Archimedean Spiral Drawing Test',
       completedAt: new Date().toISOString(),
       samplePoints: pts.length,
-      rmseDeviation: isTremulous ? '14.8 px' : '3.6 px',
-      tremorFrequency: isTremulous ? '5.1 Hz (Tremulous)' : 'None (< 1 Hz)',
-      velocitySmoothness: isTremulous ? 'Irregular (Jerk: 142)' : 'Smooth (Jerk: 28)',
-      micrographiaIndex: '0.94 (Physiological)',
+      rmseDeviation: `${rmse.toFixed(1)} px`,
+      tremorFrequency: tremorFreqVal >= 3.8 && isTremulous
+        ? `${tremorFreqVal.toFixed(1)} Hz (Tremulous)`
+        : `None (< 1 Hz)`,
+      velocitySmoothness: jerkMetric >= 45
+        ? `Irregular (Jerk: ${jerkMetric})`
+        : `Smooth (Jerk: ${jerkMetric})`,
+      micrographiaIndex: `${micrographiaRatio.toFixed(2)} (${micrographiaRatio < 0.75 ? 'Micrographia Pattern' : 'Physiological'})`,
       isTremulous,
-      riskScore: isTremulous ? 68 : 10,
+      riskScore: calculatedRisk,
       classification: isTremulous
         ? 'Kinematic Spiral Tremor & Incoordination Pattern Detected'
         : 'Typical Smooth Motor Coordination (Normal)'
@@ -357,7 +468,7 @@ export default function SpiralTest({ onBack, onComplete, patientId = 'PT-7049' }
           </div>
 
           <div style={styles.resultsActions}>
-            <button style={styles.secondaryBtn} onClick={clearCanvas}>
+            <button style={styles.secondaryBtn} onClick={handleRetest}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M23 4v6h-6" />
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
